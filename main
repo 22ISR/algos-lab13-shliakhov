@@ -1,0 +1,167 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import  requests 
+from PIL import Image, ImageTk
+from io import BytesIO
+import threading
+
+root = tk.Tk()
+root.title("Музыка из Spotify")
+root.geometry("950x700")
+
+scan = tk.StringVar()
+select = tk.StringVar(value="Дата")
+cover = tk.BooleanVar()
+data = []
+displayed = []
+
+def fetch_data():
+    try:
+        r = requests.get("https://kitek.ktkv.dev/songs.json", timeout=10)
+        if r.ok:
+            global data
+            data = r.json()
+            update_table()
+        else:
+            messagebox.showerror("Ошибка", f"Не могу загрузить данные: {r.status_code}")
+    except Exception as e:
+        messagebox.showerror("Ошибка", str(e))
+
+def ms_to_min_sec(ms):
+    try:
+        s = ms // 1000
+        return f"{s // 60}:{s % 60:02}"
+    except:
+        return "0:00"
+
+def update_table(event=None):
+    search = scan.get().lower()
+    filtered = []
+    for song in data:
+        if cover.get() and song.get("explicit"):
+            continue
+        name = song.get("name", "").lower()
+        album = song.get("album", {}).get("name", "").lower()
+        artist_names = ", ".join([a.get("name", "") for a in song.get("artists", [])]).lower()
+        if search in name or search in album or search in artist_names:
+            filtered.append(song)
+
+    select_by = select.get()
+    if select_by == "Длина":
+        filtered.sort(key=lambda x: x.get("duration_ms", 0))
+    elif select_by == "Популярность":
+        filtered.sort(key=lambda x: x.get("popularity", 0), reverse=True)
+    else:
+        filtered.sort(key=lambda x: x.get("added_at", ""), reverse=True)
+
+    for row in table.get_children():
+        table.delete(row)
+
+    global shown_data
+    shown_data = filtered
+
+    for song in filtered:
+        name = song.get("name", "Без названия")
+        artist = ", ".join([a.get("name", "") for a in song.get("artists", [])])
+        dur = ms_to_min_sec(song.get("duration_ms", 0))
+        album = song.get("album", {}).get("name", "?")
+        table.insert('', tk.END, values=(name, artist, dur, album))
+
+
+def show_details(event):
+    selected = table.selection()
+    if not selected:
+        return
+    idx = table.index(selected[0])
+    track = shown_data[idx]
+
+    title_lbl.config(text=track.get("name", "?") or "?")
+    artist_lbl.config(text=f"Артист: {', '.join([a.get('name', '') for a in track.get('artists', [])])}")
+    album_lbl.config(text=f"Альбом: {track.get('album', {}).get('name', '?')}")
+    duration_lbl.config(text=f"Длительность: {ms_to_min_sec(track.get('duration_ms', 0))}")
+    pop_lbl.config(text=f"Популярность: {track.get('popularity', '?')}")
+    date_lbl.config(text=f"Дата: {track.get('added_at', '?')}")
+    expl_lbl.config(text=f"Explicit: {'Да' if track.get('explicit') else 'Нет'}")
+
+    def load_img():
+        try:
+            img_url = track.get("album", {}).get("images", [{}])[0].get("url", "")
+            if not img_url:
+                return
+            img_resp = requests.get(img_url, timeout=5)
+            if img_resp.ok:
+                img = Image.open(BytesIO(img_resp.content))
+                img = img.resize((200, 200), Image.LANCZOS)
+                tk_img = ImageTk.PhotoImage(img)
+                root.after(0, lambda: update_image(tk_img))
+        except:
+            pass
+
+    threading.Thread(target=load_img).start()
+
+def update_image(img):
+    cover_lbl.config(image=img)
+    cover_lbl.image = img
+
+controls = ttk.Frame(root, padding=10)
+controls.pack(fill=tk.X)
+
+
+search_entry = ttk.Entry(controls, textvariable=scan, width=30)
+search_entry.pack(side=tk.LEFT, padx=5)
+search_entry.bind('<KeyRelease>', update_table)
+
+
+sort_cb = ttk.Combobox(controls, textvariable=select, state="readonly", width=15)
+sort_cb['values'] = ["Дата", "Длина", "Популярность"]
+sort_cb.pack(side=tk.LEFT, padx=5)
+sort_cb.bind('<<ComboboxSelected>>', update_table)
+
+
+hide_cb = ttk.Checkbutton(controls, text="Скрыть Explicit", variable=cover, command=update_table)
+hide_cb.pack(side=tk.LEFT, padx=5)
+
+
+cols = ("Песня", "Артист", "Длительность", "Альбом")
+table = ttk.Treeview(root, columns=cols, show='headings')
+for col in cols:
+    table.heading(col, text=col)
+    table.column(col, width=200 if col != "Длительность" else 80, anchor=tk.W if col != "Длительность" else tk.CENTER)
+
+table.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+table.bind("<<TreeviewSelect>>", show_details)
+
+
+info = ttk.Frame(root, padding=10)
+info.pack(fill=tk.X)
+
+cover_lbl = ttk.Label(info)
+cover_lbl.grid(row=0, column=0, rowspan=7, padx=10)
+
+text_info = ttk.Frame(info)
+text_info.grid(row=0, column=1, sticky=tk.W)
+
+title_lbl = ttk.Label(text_info, text="", font=("Arial", 12, "bold"))
+title_lbl.pack(anchor=tk.W)
+
+artist_lbl = ttk.Label(text_info, text="")
+artist_lbl.pack(anchor=tk.W)
+
+album_lbl = ttk.Label(text_info, text="")
+album_lbl.pack(anchor=tk.W)
+
+duration_lbl = ttk.Label(text_info, text="")
+duration_lbl.pack(anchor=tk.W)
+
+pop_lbl = ttk.Label(text_info, text="")
+pop_lbl.pack(anchor=tk.W)
+
+date_lbl = ttk.Label(text_info, text="")
+date_lbl.pack(anchor=tk.W)
+
+expl_lbl = ttk.Label(text_info, text="")
+expl_lbl.pack(anchor=tk.W)
+
+
+fetch_data()
+root.mainloop()
